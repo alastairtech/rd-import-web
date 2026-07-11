@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Rivendell Import</title>
+<link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Rivendell Import</h1>
+  </header>
+
+  <section class="card">
+    <label for="group">Group</label>
+    <select id="group"></select>
+    <div id="group-range" class="hint"></div>
+
+    <label for="scheduler_codes" style="margin-top:14px;">Scheduler codes</label>
+    <select id="scheduler_codes" multiple size="6"></select>
+    <p class="hint">Ctrl/Cmd-click (or Shift-click for a range) to select more than one.</p>
+  </section>
+
+  <section class="card">
+    <label>Source</label>
+    <div class="file-picker-row">
+      <button type="button" id="choose-files-btn" class="secondary-btn">Choose audio files…</button>
+      <button type="button" id="choose-folder-btn" class="secondary-btn">Choose folder…</button>
+    </div>
+    <input type="file" id="file-input" multiple accept="audio/*" hidden />
+    <input type="file" id="folder-input" webkitdirectory multiple hidden />
+    <div class="selected-path">
+      Selected: <span id="selected-path">none</span>
+    </div>
+  </section>
+
+  <section class="card">
+    <label>Cart assignment</label>
+    <div class="radio-row">
+      <label><input type="radio" name="cart_mode" value="auto" checked /> Auto-assign next free cart</label>
+      <label><input type="radio" name="cart_mode" value="manual" /> Specific cart number (single file only)</label>
+    </div>
+    <input type="number" id="cart_number" min="1" placeholder="Cart number" disabled />
+
+    <div id="cart-exists-notice" class="cart-exists-notice" hidden>
+      <p class="warning">
+        Cart <strong id="cart-exists-number"></strong> already exists in group
+        "<strong id="cart-exists-group"></strong>". Choose what happens to it:
+      </p>
+      <div class="radio-row">
+        <label>
+          <input type="radio" name="existing_cart_action" value="add_cut" checked />
+          Add as a new cut (keeps the existing audio)
+        </label>
+        <label>
+          <input type="radio" name="existing_cart_action" value="delete_cuts" />
+          Delete existing cuts first, then import (overwrite)
+        </label>
+      </div>
+    </div>
+  </section>
+
+  <section class="card">
+    <label class="checkbox">
+      <input type="checkbox" id="delete_source" checked/>
+      Delete source file(s) after successful import
+    </label>
+    <button id="import-btn">Import</button>
+  </section>
+
+  <details class="card">
+    <summary>Advanced options</summary>
+    <p class="warning">
+      ⚠ These control audio processing during import. The defaults
+      match Edge Radio's known-good settings — don't change them unless
+      you know what you're doing.
+    </p>
+    <div class="advanced-grid">
+      <div>
+        <label for="normalization_level">Normalization level (dB)</label>
+        <input type="number" id="normalization_level" value="-13" />
+      </div>
+      <div>
+        <label for="autotrim_level">Autotrim level (dB)</label>
+        <input type="number" id="autotrim_level" value="-40" />
+      </div>
+      <div>
+        <label for="segue_level">Segue level (dB)</label>
+        <input type="number" id="segue_level" value="-15" />
+      </div>
+      <div>
+        <label for="startdate_offset">Start date offset (days)</label>
+        <input type="number" id="startdate_offset" value="0" />
+      </div>
+      <div>
+        <label for="enddate_offset">End date offset (days)</label>
+        <input type="number" id="enddate_offset" value="0" />
+      </div>
+    </div>
+    <label class="checkbox" style="margin-top:10px;">
+      <input type="checkbox" id="fix_broken_formats" checked />
+      Fix broken formats
+    </label>
+    <p class="hint">Leave a numeric field blank to omit that flag and use rdimport's own default instead.</p>
+    <button type="button" id="reset-advanced-btn" class="link-btn">Reset to defaults</button>
+  </details>
+
+  <div class="modal-overlay" id="import-modal" hidden>
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+      <div class="modal-icon" id="modal-icon">
+        <div class="spinner" id="modal-spinner"></div>
+      </div>
+      <h2 id="modal-title">Importing…</h2>
+      <p id="modal-message" class="modal-message">Please wait.</p>
+      <pre id="modal-raw-log" class="modal-raw-log" hidden></pre>
+      <div class="modal-actions" id="modal-actions" hidden>
+        <button type="button" id="modal-raw-log-btn" class="secondary-btn">View raw log</button>
+        <button type="button" id="modal-close-btn" class="secondary-btn">Close</button>
+      </div>
+    </div>
+  </div>
+</div>
+<script src="/static/app.js"></script>
+</body>
+</html>
