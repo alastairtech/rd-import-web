@@ -21,6 +21,9 @@ PORT="${PORT:-8000}"
 RD_IMPORT_ROOT="${RD_IMPORT_ROOT:-/home/$SERVICE_USER}"
 RD_CONF_PATH="${RD_CONF_PATH:-/etc/rd.conf}"
 UNIT_PATH="/etc/systemd/system/${SERVICE_NAME}.service"
+AUTO_SCHEDULE_SERVICE_NAME="rd-auto-schedule"
+AUTO_SCHEDULE_UNIT_PATH="/etc/systemd/system/${AUTO_SCHEDULE_SERVICE_NAME}.service"
+AUTO_SCHEDULE_TIMER_PATH="/etc/systemd/system/${AUTO_SCHEDULE_SERVICE_NAME}.timer"
 
 if [ "$EUID" -eq 0 ]; then
   echo "Don't run this script directly as root." >&2
@@ -91,9 +94,43 @@ RestartSec=3
 WantedBy=multi-user.target
 EOF
 
+# --- Auto Scheduling timer ---
+# Fires every 15 minutes; app/auto_schedule_runner.py checks the rule
+# saved from the Scheduler tab's Auto Scheduling card and only acts when
+# it's actually due (see app/auto_schedule.py CHECK_WINDOW_MINUTES). The
+# oneshot service below is never enabled/started directly — only the
+# timer is, and it triggers the service by matching unit name.
+sudo tee "$AUTO_SCHEDULE_UNIT_PATH" > /dev/null << EOF
+[Unit]
+Description=Rivendell Import Web - Auto Scheduling run
+After=network.target mysql.service
+
+[Service]
+Type=oneshot
+User=$SERVICE_USER
+Group=$SERVICE_GROUP
+WorkingDirectory=$APP_DIR
+Environment=RD_IMPORT_ROOT=$RD_IMPORT_ROOT
+Environment=RD_CONF_PATH=$RD_CONF_PATH
+ExecStart=$APP_DIR/venv/bin/python -m app.auto_schedule_runner
+EOF
+
+sudo tee "$AUTO_SCHEDULE_TIMER_PATH" > /dev/null << EOF
+[Unit]
+Description=Rivendell Import Web - Auto Scheduling timer
+
+[Timer]
+OnCalendar=*:00/15
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+EOF
+
 sudo systemctl daemon-reload
 sudo systemctl enable "$SERVICE_NAME"
 sudo systemctl restart "$SERVICE_NAME"
+sudo systemctl enable --now "${AUTO_SCHEDULE_SERVICE_NAME}.timer"
 
 echo
 echo "Done. Current status:"
@@ -105,3 +142,5 @@ echo "  sudo systemctl status $SERVICE_NAME"
 echo "  sudo systemctl restart $SERVICE_NAME"
 echo "  sudo systemctl stop $SERVICE_NAME"
 echo "  journalctl -u $SERVICE_NAME -f"
+echo "  systemctl list-timers ${AUTO_SCHEDULE_SERVICE_NAME}.timer"
+echo "  journalctl -u $AUTO_SCHEDULE_SERVICE_NAME -f"

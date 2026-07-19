@@ -167,6 +167,52 @@
       <button type="button" id="scheduler-generate-btn" class="primary-btn" style="margin-top:14px;">Generate Schedule</button>
     </section>
 
+    <section class="card">
+      <label>Auto Scheduling</label>
+      <p class="hint">
+        Runs rdlogmanager automatically on a recurring weekly schedule for
+        the service selected above, keeping a rolling window of days
+        generated ahead of time. Requires the rd-auto-schedule systemd
+        timer to be installed on this machine (see README).
+      </p>
+      <label class="checkbox" style="margin-top:10px;">
+        <input type="checkbox" id="auto_enabled" />
+        Enable auto scheduling for "<span id="auto-service-label">(no service selected)</span>"
+      </label>
+
+      <div class="advanced-grid">
+        <div>
+          <label for="auto_weekday">Weekday</label>
+          <select id="auto_weekday">
+            <option value="0">Monday</option>
+            <option value="1">Tuesday</option>
+            <option value="2">Wednesday</option>
+            <option value="3">Thursday</option>
+            <option value="4">Friday</option>
+            <option value="5">Saturday</option>
+            <option value="6">Sunday</option>
+          </select>
+        </div>
+        <div>
+          <label for="auto_time">Time</label>
+          <input type="time" id="auto_time" value="03:00" />
+        </div>
+        <div>
+          <label for="auto_days_ahead">Days to keep scheduled ahead</label>
+          <input type="number" id="auto_days_ahead" min="1" value="14" />
+        </div>
+      </div>
+
+      <label class="checkbox" style="margin-top:10px;">
+        <input type="checkbox" id="auto_import_traffic" />
+        Import traffic on each auto run
+      </label>
+
+      <div id="auto-schedule-status" class="hint"></div>
+
+      <button type="button" id="auto-save-btn" class="primary-btn" style="margin-top:10px;">Save Auto Scheduling</button>
+    </section>
+
     <details class="card" id="scheduler-advanced-card" hidden>
       <summary>Advanced options</summary>
       <p class="warning">

@@ -1,3 +1,4 @@
+from dataclasses import asdict
 from datetime import date
 from pathlib import Path
 from typing import List, Optional
@@ -9,6 +10,8 @@ from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 
 from . import db, importer, scheduler
+from .auto_schedule import AutoScheduleConfig, load_config as load_auto_schedule_config
+from .auto_schedule import save_config as save_auto_schedule_config
 from .config import IMPORT_ROOT
 from .rdconf import RdConfError, load_db_creds
 
@@ -178,6 +181,78 @@ def api_scheduler_run(req: SchedulerRunRequest):
             for d in result.days
         ],
     }
+
+
+class AutoScheduleRequest(BaseModel):
+    enabled: bool
+    service: str
+    weekday: int  # 0=Monday .. 6=Sunday
+    time: str  # "HH:MM", 24-hour
+    days_ahead: int
+    import_traffic: bool = False
+    timeout_minutes: Optional[int] = None
+
+
+@app.get("/api/auto-schedule")
+def api_get_auto_schedule():
+    config = load_auto_schedule_config()
+    return {
+        "enabled": config.enabled,
+        "service": config.service,
+        "weekday": config.weekday,
+        "time": config.time,
+        "days_ahead": config.days_ahead,
+        "import_traffic": config.import_traffic,
+        "timeout_minutes": config.timeout_minutes,
+        "last_run": asdict(config.last_run) if config.last_run else None,
+    }
+
+
+@app.post("/api/auto-schedule")
+def api_save_auto_schedule(req: AutoScheduleRequest):
+    if not 0 <= req.weekday <= 6:
+        raise HTTPException(status_code=400, detail="Weekday must be between 0 (Monday) and 6 (Sunday)")
+
+    try:
+        hh, mm = req.time.split(":")
+        valid_time = 0 <= int(hh) <= 23 and 0 <= int(mm) <= 59
+    except ValueError:
+        valid_time = False
+    if not valid_time:
+        raise HTTPException(status_code=400, detail="Time must be in 24-hour HH:MM format")
+
+    if req.days_ahead <= 0:
+        raise HTTPException(status_code=400, detail="Number of days must be greater than 0")
+
+    if req.timeout_minutes is not None and req.timeout_minutes <= 0:
+        raise HTTPException(status_code=400, detail="Timeout must be greater than 0 minutes")
+
+    if req.enabled:
+        try:
+            creds = load_db_creds()
+            services = db.list_services(creds)
+        except RdConfError as e:
+            raise HTTPException(status_code=500, detail=f"rd.conf error: {e}")
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Database error: {e}")
+        if not any(s.name == req.service for s in services):
+            raise HTTPException(status_code=400, detail=f"Unknown service '{req.service}'")
+
+    # last_run is runner-owned state, not something the UI submits — carry
+    # it forward from disk so saving settings never erases run history.
+    existing = load_auto_schedule_config()
+    config = AutoScheduleConfig(
+        enabled=req.enabled,
+        service=req.service,
+        weekday=req.weekday,
+        time=req.time,
+        days_ahead=req.days_ahead,
+        import_traffic=req.import_traffic,
+        timeout_minutes=req.timeout_minutes,
+        last_run=existing.last_run,
+    )
+    save_auto_schedule_config(config)
+    return {"saved": True}
 
 
 @app.post("/api/upload")

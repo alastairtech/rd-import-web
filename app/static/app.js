@@ -386,6 +386,86 @@ async function loadServices() {
   } catch (err) {
     select.innerHTML = `<option value="">(failed to load: ${err.message})</option>`;
   }
+  loadAutoSchedule();
+}
+
+function updateAutoServiceLabel() {
+  el("auto-service-label").textContent = el("scheduler_service").value || "(no service selected)";
+}
+
+async function loadAutoSchedule() {
+  try {
+    const res = await fetch("/api/auto-schedule");
+    const data = await res.json();
+    if (!res.ok) throw new Error(formatDetail(data.detail));
+
+    // Restore the saved rule's service into the top selector, but only if
+    // nothing else already picked one (e.g. the single-service auto-select
+    // in loadServices()) — never override an explicit user choice.
+    if (data.service && !el("scheduler_service").value) {
+      el("scheduler_service").value = data.service;
+      onServiceChange();
+    } else {
+      updateAutoServiceLabel();
+    }
+
+    el("auto_enabled").checked = data.enabled;
+    el("auto_weekday").value = String(data.weekday);
+    el("auto_time").value = data.time;
+    el("auto_days_ahead").value = String(data.days_ahead);
+    el("auto_import_traffic").checked = data.import_traffic;
+    renderAutoScheduleStatus(data);
+  } catch (err) {
+    el("auto-schedule-status").textContent = `Failed to load saved settings: ${err.message}`;
+  }
+}
+
+function renderAutoScheduleStatus(data) {
+  const status = el("auto-schedule-status");
+  const parts = [];
+  if (data.service) parts.push(`Saved for service "${data.service}".`);
+  if (data.last_run) {
+    const outcome = data.last_run.success
+      ? "succeeded"
+      : `failed (${data.last_run.failed_days} of ${data.last_run.days_run} day(s))`;
+    parts.push(`Last auto run: ${data.last_run.date} — ${outcome}.`);
+  } else {
+    parts.push("Auto scheduling hasn't run yet.");
+  }
+  status.textContent = parts.join(" ");
+}
+
+async function saveAutoSchedule() {
+  const btn = el("auto-save-btn");
+  const payload = {
+    enabled: el("auto_enabled").checked,
+    service: el("scheduler_service").value,
+    weekday: parseInt(el("auto_weekday").value, 10),
+    time: el("auto_time").value,
+    days_ahead: parseInt(el("auto_days_ahead").value, 10),
+    import_traffic: el("auto_import_traffic").checked,
+  };
+
+  if (payload.enabled && !payload.service) {
+    alert("Select a service at the top of the Scheduler tab before enabling auto scheduling.");
+    return;
+  }
+
+  btn.disabled = true;
+  try {
+    const res = await fetch("/api/auto-schedule", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(formatDetail(data.detail));
+    await loadAutoSchedule();
+  } catch (err) {
+    alert(`Failed to save auto scheduling: ${err.message}`);
+  } finally {
+    btn.disabled = false;
+  }
 }
 
 function onServiceChange() {
@@ -394,6 +474,7 @@ function onServiceChange() {
   schedulerState.selectedDates.clear();
   schedulerState.scheduledCache.clear();
   hideSchedulerOverwriteNotice();
+  updateAutoServiceLabel();
 
   const hasService = !!schedulerState.service;
   el("scheduler-calendar-card").hidden = !hasService;
@@ -652,6 +733,7 @@ function setupScheduler() {
   el("scheduler-overwrite-cancel-btn").addEventListener("click", hideSchedulerOverwriteNotice);
   el("scheduler-overwrite-confirm-btn").addEventListener("click", runSchedule);
   el("scheduler-reset-advanced-btn").addEventListener("click", resetSchedulerAdvancedDefaults);
+  el("auto-save-btn").addEventListener("click", saveAutoSchedule);
 }
 
 function setupTabs() {

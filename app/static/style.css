@@ -88,7 +88,7 @@ label {
   margin-top: 6px;
 }
 
-select, input[type="number"] {
+select, input[type="number"], input[type="time"] {
   width: 100%;
   padding: 8px 10px;
   background: #14171a;

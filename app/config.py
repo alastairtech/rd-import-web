@@ -37,3 +37,13 @@ IMPORT_TIMEOUT_SECONDS = int(os.environ.get("RD_IMPORT_TIMEOUT", "1800"))
 # since a full generate+traffic-merge can be slow against a remote DB on
 # modest hardware (e.g. a Raspberry Pi host).
 SCHEDULER_TIMEOUT_SECONDS = int(os.environ.get("RD_SCHEDULER_TIMEOUT", str(30 * 60)))
+
+# Where the Scheduler tab's Auto Scheduling rule (weekday/time/days-ahead,
+# plus its last-run result) is persisted as JSON. Both the web app and the
+# rd-auto-schedule systemd timer's entry point (app/auto_schedule_runner.py)
+# read/write this file, so it must be reachable by whatever user runs each
+# of those (install-service.sh runs both under the same service user).
+AUTO_SCHEDULE_CONFIG_PATH = os.environ.get(
+    "RD_AUTO_SCHEDULE_CONFIG_PATH",
+    str(Path(__file__).resolve().parent.parent / "data" / "auto_schedule.json"),
+)

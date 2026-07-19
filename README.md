@@ -60,6 +60,38 @@ the station's own cron script uses — instead of hand-running it.
 - Requires the service's Rivendell `NAME_TEMPLATE` to be set — that's how
   a calendar date maps to a `LOGS.NAME`.
 
+#### Auto Scheduling
+
+A single recurring rule — service, weekday, time, and a day count — that
+keeps a rolling window of logs generated ahead of time without anyone
+running the Scheduler tab by hand.
+
+- Targets whichever service is picked in the **Service** dropdown at the
+  top of the tab — there's no separate service field here. Pick a
+  **Weekday**, a **Time**, and **Days to keep scheduled ahead** (N), then
+  check "Enable auto scheduling" and save. Saving just writes the rule to
+  `data/auto_schedule.json` — it doesn't run anything itself. On reload,
+  the top Service dropdown restores to whatever was last saved (unless
+  something else already selected one, e.g. the single-service
+  auto-select).
+- A systemd timer (`rd-auto-schedule.timer`, installed by
+  `install-service.sh`) ticks every 15 minutes and runs
+  `app/auto_schedule_runner.py`. On the configured weekday, within 15
+  minutes of the configured time, it fires once and runs
+  `rdlogmanager -g [-t] -s <service> -d <offset>` for each of the next N
+  days starting tomorrow — the same rolling window every time, so
+  already-generated days in it get regenerated too (this is the point:
+  it keeps the buffer current as traffic changes). Outside that window,
+  or on any other weekday, it does nothing.
+- "Import traffic on each auto run" adds `-t` to every call in the run,
+  same as the manual Scheduler tab's equivalent option.
+- The card shows the result of the last auto run (date, success/failure,
+  days affected). This state — along with the rule itself — lives in
+  `data/auto_schedule.json`, read by both the web app and the timer's
+  script.
+- The timer only exists if `install-service.sh` has been (re)run since
+  this feature was added — see "Running as a systemd service" below.
+
 ## Setup
 
 ```bash
@@ -89,6 +121,7 @@ All via environment variables, all optional:
 | `RD_IMPORT_TIMEOUT`    | `1800`               | Max seconds a single rdimport call can run |
 | `RDLOGMANAGER_BIN`     | `rdlogmanager`       | Path to the rdlogmanager binary (if not on PATH) |
 | `RD_SCHEDULER_TIMEOUT` | `1800`               | Default max seconds per day for a Scheduler tab run (overridable per-run in the UI) |
+| `RD_AUTO_SCHEDULE_CONFIG_PATH` | `<project root>/data/auto_schedule.json` | Where the Auto Scheduling rule and last-run result are persisted |
 
 ## Running
 
@@ -117,10 +150,15 @@ that should own the app (not root):
 ./install-service.sh
 ```
 
-It creates/updates the venv, installs dependencies, writes a systemd unit
-file, and enables + starts the service. It uses `sudo` itself for the
-steps that actually need root (writing the unit file, `systemctl`), so
-you'll be prompted for your password.
+It creates/updates the venv, installs dependencies, writes systemd unit
+files for both the main app and the Auto Scheduling timer
+(`rd-auto-schedule.timer`, see "Auto Scheduling" above), and
+enables/starts them. It uses `sudo` itself for the steps that actually
+need root (writing unit files, `systemctl`), so you'll be prompted for
+your password. It's safe to rerun on an already-deployed box — e.g. after
+a `git pull` that adds a new unit like the Auto Scheduling timer, or any
+time you just need the running service to pick up new code (see the
+restart note further down).
 
 Defaults to running as whoever invokes it, listening on
 `127.0.0.1:8000`, with `RD_IMPORT_ROOT` set to that user's home
@@ -136,6 +174,10 @@ Useful commands afterward:
 sudo systemctl status rd-import-web
 sudo systemctl restart rd-import-web
 journalctl -u rd-import-web -f
+
+# Auto Scheduling timer
+systemctl list-timers rd-auto-schedule.timer   # confirm it's scheduled
+journalctl -u rd-auto-schedule -f              # logs from each firing
 ```
 
 **After pulling code updates on an already-deployed box, always
