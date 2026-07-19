@@ -19,9 +19,21 @@ IMPORT_ROOT = Path(os.environ.get("RD_IMPORT_ROOT", "/home/rd/import")).resolve(
 # rdimport binary — assumed on PATH unless overridden
 RDIMPORT_BIN = os.environ.get("RDIMPORT_BIN", "rdimport")
 
+# rdlogmanager binary — assumed on PATH unless overridden
+RDLOGMANAGER_BIN = os.environ.get("RDLOGMANAGER_BIN", "rdlogmanager")
+
 # File extensions treated as importable audio when walking a folder
 AUDIO_EXTENSIONS = {".wav", ".flac", ".mp3", ".ogg", ".m4a", ".aif", ".aiff"}
 
 # How long a single rdimport invocation is allowed to run before we give up
 # and report a timeout (seconds). Large folders may need this raised.
 IMPORT_TIMEOUT_SECONDS = int(os.environ.get("RD_IMPORT_TIMEOUT", "1800"))
+
+# How long a single rdlogmanager invocation (one day's -g[/-t] run) is
+# allowed to run before we give up (seconds). A schedule batch runs one
+# call per selected date sequentially, so this bounds each step. This is
+# just the server-side fallback — the Scheduler tab's Advanced options let
+# the user override it per run (in minutes) from the UI. Generous default
+# since a full generate+traffic-merge can be slow against a remote DB on
+# modest hardware (e.g. a Raspberry Pi host).
+SCHEDULER_TIMEOUT_SECONDS = int(os.environ.get("RD_SCHEDULER_TIMEOUT", str(30 * 60)))

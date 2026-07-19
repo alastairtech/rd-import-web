@@ -1,3 +1,4 @@
+from datetime import date
 from pathlib import Path
 from typing import List, Optional
 
@@ -7,7 +8,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 
-from . import db, importer
+from . import db, importer, scheduler
 from .config import IMPORT_ROOT
 from .rdconf import RdConfError, load_db_creds
 
@@ -57,6 +58,126 @@ def api_scheduler_codes():
         raise HTTPException(status_code=500, detail=f"Database error: {e}")
 
     return [{"code": c.code, "description": c.description} for c in codes]
+
+
+@app.get("/api/services")
+def api_services():
+    try:
+        creds = load_db_creds()
+        services = db.list_services(creds)
+    except RdConfError as e:
+        raise HTTPException(status_code=500, detail=f"rd.conf error: {e}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Database error: {e}")
+
+    return [{"name": s.name, "description": s.description} for s in services]
+
+
+class ScheduledDaysRequest(BaseModel):
+    service: str
+    dates: List[str]  # ISO YYYY-MM-DD
+
+
+@app.post("/api/scheduled-days")
+def api_scheduled_days(req: ScheduledDaysRequest):
+    try:
+        creds = load_db_creds()
+        services = db.list_services(creds)
+    except RdConfError as e:
+        raise HTTPException(status_code=500, detail=f"rd.conf error: {e}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Database error: {e}")
+
+    svc = next((s for s in services if s.name == req.service), None)
+    if svc is None:
+        raise HTTPException(status_code=400, detail=f"Unknown service '{req.service}'")
+    if not svc.name_template:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Service '{svc.name}' has no NAME_TEMPLATE configured in Rivendell",
+        )
+
+    try:
+        parsed = [date.fromisoformat(d) for d in req.dates]
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=f"Invalid date: {e}")
+
+    name_to_date = {scheduler.render_log_name(svc.name_template, d): d for d in parsed}
+    try:
+        statuses = db.log_statuses(creds, svc.name, list(name_to_date.keys()))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Database error: {e}")
+
+    # Color reflects how complete the day's log is:
+    #   green  = traffic merged AND chained to the next day's log
+    #   orange = chained, but traffic not merged
+    #   purple = traffic merged, but not chained
+    #   red    = neither — an incomplete/bad schedule
+    days = {}
+    for name, d in name_to_date.items():
+        status = statuses.get(name)
+        if status is None:
+            continue  # no log at all for this date — leave unshaded
+        if status.traffic_linked and status.chained:
+            color = "green"
+        elif status.chained:
+            color = "orange"
+        elif status.traffic_linked:
+            color = "purple"
+        else:
+            color = "red"
+        days[d.isoformat()] = color
+
+    return {"days": days}
+
+
+class SchedulerRunRequest(BaseModel):
+    service: str
+    dates: List[str]  # ISO YYYY-MM-DD
+    import_traffic: bool = False
+    timeout_minutes: Optional[int] = None
+
+
+@app.post("/api/scheduler-run")
+def api_scheduler_run(req: SchedulerRunRequest):
+    if not req.dates:
+        raise HTTPException(status_code=400, detail="No dates selected")
+    try:
+        parsed = sorted({date.fromisoformat(d) for d in req.dates})
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=f"Invalid date: {e}")
+
+    today = date.today()
+    past = [d.isoformat() for d in parsed if d < today]
+    if past:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cannot generate for past date(s): {', '.join(past)}",
+        )
+
+    timeout_seconds = None
+    if req.timeout_minutes is not None:
+        if req.timeout_minutes <= 0:
+            raise HTTPException(status_code=400, detail="Timeout must be greater than 0 minutes")
+        timeout_seconds = req.timeout_minutes * 60
+
+    result = scheduler.run_batch(req.service, parsed, req.import_traffic, timeout_seconds)
+
+    return {
+        "service": req.service,
+        "success": result.success,
+        "days": [
+            {
+                "date": d.date.isoformat(),
+                "command": " ".join(d.command),
+                "returncode": d.returncode,
+                "stdout": d.stdout,
+                "stderr": d.stderr,
+                "success": d.success,
+            }
+            for d in result.days
+        ],
+    }
 
 
 @app.post("/api/upload")

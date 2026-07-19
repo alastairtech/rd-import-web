@@ -176,9 +176,9 @@ function numOrNull(id) {
   return v === "" ? null : parseInt(v, 10);
 }
 
-function showModalLoading(message) {
+function showModalLoading(message, title = "Importing\u2026") {
   el("modal-icon").innerHTML = `<div class="spinner" id="modal-spinner"></div>`;
-  el("modal-title").textContent = "Importing\u2026";
+  el("modal-title").textContent = title;
   el("modal-message").textContent = message;
   el("modal-raw-log").hidden = true;
   el("modal-raw-log").textContent = "";
@@ -332,6 +332,346 @@ function resetAdvancedDefaults() {
   el("fix_broken_formats").checked = ADVANCED_DEFAULTS.fix_broken_formats;
 }
 
+const schedulerState = {
+  service: null,
+  visibleMonth: null, // Date, first-of-month
+  selectedDates: new Set(), // ISO strings, may span multiple visited months
+  scheduledCache: new Map(), // key `${service}|${yyyy-mm}` -> Map<ISO string, color>
+};
+
+const STATUS_COLORS = ["green", "orange", "purple", "red"];
+
+function toISODate(d) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+function parseISODate(s) {
+  const [y, m, d] = s.split("-").map(Number);
+  return new Date(y, m - 1, d);
+}
+
+function startOfMonth(d) {
+  return new Date(d.getFullYear(), d.getMonth(), 1);
+}
+
+function addMonths(d, n) {
+  return new Date(d.getFullYear(), d.getMonth() + n, 1);
+}
+
+function isSameDay(a, b) {
+  return (
+    a.getFullYear() === b.getFullYear() &&
+    a.getMonth() === b.getMonth() &&
+    a.getDate() === b.getDate()
+  );
+}
+
+async function loadServices() {
+  const select = el("scheduler_service");
+  try {
+    const res = await fetch("/api/services");
+    const data = await res.json();
+    if (!res.ok) throw new Error(formatDetail(data.detail));
+
+    const options = data.map((s) => `<option value="${escapeHtml(s.name)}">${escapeHtml(s.name)}${s.description ? " — " + escapeHtml(s.description) : ""}</option>`);
+    select.innerHTML = `<option value="">Select a service…</option>` + options.join("");
+
+    if (data.length === 1) {
+      select.value = data[0].name;
+      onServiceChange();
+    }
+  } catch (err) {
+    select.innerHTML = `<option value="">(failed to load: ${err.message})</option>`;
+  }
+}
+
+function onServiceChange() {
+  const service = el("scheduler_service").value;
+  schedulerState.service = service || null;
+  schedulerState.selectedDates.clear();
+  schedulerState.scheduledCache.clear();
+  hideSchedulerOverwriteNotice();
+
+  const hasService = !!schedulerState.service;
+  el("scheduler-calendar-card").hidden = !hasService;
+  el("scheduler-options-card").hidden = !hasService;
+  el("scheduler-advanced-card").hidden = !hasService;
+
+  if (hasService) {
+    schedulerState.visibleMonth = startOfMonth(new Date());
+    renderCalendar();
+  }
+}
+
+function renderCalendar() {
+  const month = schedulerState.visibleMonth;
+  const monthNames = [
+    "January", "February", "March", "April", "May", "June",
+    "July", "August", "September", "October", "November", "December",
+  ];
+  el("cal-month-label").textContent = `${monthNames[month.getMonth()]} ${month.getFullYear()}`;
+
+  const grid = el("calendar-grid");
+  grid.innerHTML = "";
+
+  const firstWeekday = month.getDay(); // 0 = Sunday
+  const daysInMonth = new Date(month.getFullYear(), month.getMonth() + 1, 0).getDate();
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  for (let i = 0; i < firstWeekday; i++) {
+    const pad = document.createElement("div");
+    pad.className = "calendar-day calendar-day-pad";
+    grid.appendChild(pad);
+  }
+
+  for (let day = 1; day <= daysInMonth; day++) {
+    const cellDate = new Date(month.getFullYear(), month.getMonth(), day);
+    const iso = toISODate(cellDate);
+    const cell = document.createElement("div");
+    cell.className = "calendar-day";
+    cell.textContent = String(day);
+    cell.dataset.date = iso;
+
+    if (cellDate < today) cell.classList.add("is-past");
+    if (isSameDay(cellDate, today)) cell.classList.add("is-today");
+    if (schedulerState.selectedDates.has(iso)) cell.classList.add("is-selected");
+
+    grid.appendChild(cell);
+  }
+
+  fetchScheduledDays();
+}
+
+async function fetchScheduledDays() {
+  const month = schedulerState.visibleMonth;
+  const service = schedulerState.service;
+  if (!service) return;
+
+  const key = `${service}|${month.getFullYear()}-${String(month.getMonth() + 1).padStart(2, "0")}`;
+  const cached = schedulerState.scheduledCache.get(key);
+  if (cached) {
+    applyScheduledShading(cached);
+    return;
+  }
+
+  const daysInMonth = new Date(month.getFullYear(), month.getMonth() + 1, 0).getDate();
+  const dates = [];
+  for (let day = 1; day <= daysInMonth; day++) {
+    dates.push(toISODate(new Date(month.getFullYear(), month.getMonth(), day)));
+  }
+
+  try {
+    const res = await fetch("/api/scheduled-days", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ service, dates }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(formatDetail(data.detail));
+
+    const statusMap = new Map(Object.entries(data.days));
+    schedulerState.scheduledCache.set(key, statusMap);
+    // The service/month may have changed while this request was in flight.
+    if (schedulerState.service === service && schedulerState.visibleMonth === month) {
+      applyScheduledShading(statusMap);
+    }
+  } catch (err) {
+    // Shading is informational only — don't block calendar use over it.
+  }
+}
+
+function applyScheduledShading(statusMap) {
+  const grid = el("calendar-grid");
+  grid.querySelectorAll(".calendar-day[data-date]").forEach((cell) => {
+    STATUS_COLORS.forEach((color) => cell.classList.remove(`status-${color}`));
+    const color = statusMap.get(cell.dataset.date);
+    if (color) cell.classList.add(`status-${color}`);
+  });
+}
+
+function onCalendarGridClick(ev) {
+  const cell = ev.target.closest(".calendar-day[data-date]");
+  if (!cell || cell.classList.contains("is-past")) return;
+
+  const iso = cell.dataset.date;
+  if (schedulerState.selectedDates.has(iso)) {
+    schedulerState.selectedDates.delete(iso);
+    cell.classList.remove("is-selected");
+  } else {
+    schedulerState.selectedDates.add(iso);
+    cell.classList.add("is-selected");
+  }
+  hideSchedulerOverwriteNotice();
+}
+
+function onCalPrev() {
+  schedulerState.visibleMonth = addMonths(schedulerState.visibleMonth, -1);
+  renderCalendar();
+}
+
+function onCalNext() {
+  schedulerState.visibleMonth = addMonths(schedulerState.visibleMonth, 1);
+  renderCalendar();
+}
+
+function getScheduledConflicts() {
+  const allScheduled = new Set();
+  const prefix = `${schedulerState.service}|`;
+  for (const [key, statusMap] of schedulerState.scheduledCache.entries()) {
+    if (key.startsWith(prefix)) {
+      statusMap.forEach((color, iso) => allScheduled.add(iso));
+    }
+  }
+  return Array.from(schedulerState.selectedDates)
+    .filter((iso) => allScheduled.has(iso))
+    .sort();
+}
+
+function showSchedulerOverwriteNotice(conflicts) {
+  el("scheduler-overwrite-count").textContent = String(conflicts.length);
+  el("scheduler-overwrite-dates").textContent = conflicts.join(", ");
+  el("scheduler-overwrite-notice").hidden = false;
+}
+
+function hideSchedulerOverwriteNotice() {
+  el("scheduler-overwrite-notice").hidden = true;
+}
+
+function onGenerateClick() {
+  if (schedulerState.selectedDates.size === 0) {
+    alert("Select at least one day first.");
+    return;
+  }
+
+  const conflicts = getScheduledConflicts();
+  if (conflicts.length > 0 && !el("overwrite_without_asking").checked) {
+    showSchedulerOverwriteNotice(conflicts);
+    return;
+  }
+
+  runSchedule();
+}
+
+async function runSchedule() {
+  hideSchedulerOverwriteNotice();
+
+  const service = schedulerState.service;
+  const dates = Array.from(schedulerState.selectedDates).sort();
+  const importTraffic = el("import_traffic").checked;
+  const timeoutMinutes = parseInt(el("scheduler_timeout_minutes").value, 10) || SCHEDULER_ADVANCED_DEFAULTS.timeout_minutes;
+
+  const genBtn = el("scheduler-generate-btn");
+  genBtn.disabled = true;
+  const dayWord = dates.length === 1 ? "day" : "days";
+  showModalLoading(`Generating ${dates.length} ${dayWord} for "${service}"…`, "Generating schedule…");
+
+  try {
+    const res = await fetch("/api/scheduler-run", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        service,
+        dates,
+        import_traffic: importTraffic,
+        timeout_minutes: timeoutMinutes,
+      }),
+    });
+    const data = await res.json();
+
+    if (!res.ok) {
+      showModalResult({
+        success: false,
+        title: "Schedule generation failed",
+        message: formatDetail(data.detail),
+        rawLog: null,
+      });
+      return;
+    }
+
+    const rawLog = data.days
+      .map((d) =>
+        [
+          `[${d.date}] Command: ${d.command}`,
+          d.stdout || "(no stdout)",
+          d.stderr ? `--- stderr ---\n${d.stderr}` : null,
+        ]
+          .filter(Boolean)
+          .join("\n")
+      )
+      .join("\n\n");
+
+    if (data.success) {
+      schedulerState.selectedDates.clear();
+      schedulerState.scheduledCache.clear();
+      renderCalendar();
+      showModalResult({
+        success: true,
+        title: "Schedule generated",
+        message: `Generated ${data.days.length} ${data.days.length === 1 ? "day" : "days"} for "${service}".`,
+        rawLog,
+      });
+    } else {
+      const failed = data.days.filter((d) => !d.success).length;
+      showModalResult({
+        success: false,
+        title: "Schedule generation failed",
+        message: `${failed} of ${data.days.length} day(s) failed. Check the raw log for details.`,
+        rawLog,
+      });
+    }
+  } catch (err) {
+    showModalResult({
+      success: false,
+      title: "Schedule generation failed",
+      message: `Request failed: ${err.message}`,
+      rawLog: null,
+    });
+  } finally {
+    genBtn.disabled = false;
+  }
+}
+
+const SCHEDULER_ADVANCED_DEFAULTS = {
+  timeout_minutes: 30,
+};
+
+function resetSchedulerAdvancedDefaults() {
+  el("scheduler_timeout_minutes").value = String(SCHEDULER_ADVANCED_DEFAULTS.timeout_minutes);
+}
+
+function setupScheduler() {
+  el("scheduler_service").addEventListener("change", onServiceChange);
+  el("cal-prev-btn").addEventListener("click", onCalPrev);
+  el("cal-next-btn").addEventListener("click", onCalNext);
+  el("calendar-grid").addEventListener("click", onCalendarGridClick);
+  el("scheduler-generate-btn").addEventListener("click", onGenerateClick);
+  el("scheduler-overwrite-cancel-btn").addEventListener("click", hideSchedulerOverwriteNotice);
+  el("scheduler-overwrite-confirm-btn").addEventListener("click", runSchedule);
+  el("scheduler-reset-advanced-btn").addEventListener("click", resetSchedulerAdvancedDefaults);
+}
+
+function setupTabs() {
+  const tabs = [
+    { btn: el("tab-btn-import"), panel: el("tab-panel-import") },
+    { btn: el("tab-btn-scheduler"), panel: el("tab-panel-scheduler") },
+  ];
+
+  tabs.forEach(({ btn, panel }) => {
+    btn.addEventListener("click", () => {
+      tabs.forEach(({ btn: b, panel: p }) => {
+        const active = b === btn;
+        b.classList.toggle("active", active);
+        b.setAttribute("aria-selected", String(active));
+        p.hidden = !active;
+      });
+    });
+  });
+}
+
 el("choose-files-btn").addEventListener("click", () => el("file-input").click());
 el("choose-folder-btn").addEventListener("click", () => el("folder-input").click());
 
@@ -350,7 +690,12 @@ el("modal-raw-log-btn").addEventListener("click", toggleRawLog);
 
 loadGroups();
 setupCartMode();
+setupTabs();
 loadSchedulerCodes();
 resetAdvancedDefaults();
 el("import-btn").addEventListener("click", runImport);
 el("reset-advanced-btn").addEventListener("click", resetAdvancedDefaults);
+
+loadServices();
+setupScheduler();
+resetSchedulerAdvancedDefaults();

@@ -12,6 +12,13 @@
     <h1>Rivendell Import</h1>
   </header>
 
+  <div class="tabs" role="tablist">
+    <button type="button" class="tab-btn active" id="tab-btn-import" role="tab" aria-selected="true" aria-controls="tab-panel-import">Import</button>
+    <button type="button" class="tab-btn" id="tab-btn-scheduler" role="tab" aria-selected="false" aria-controls="tab-panel-scheduler">Scheduler</button>
+  </div>
+
+  <div class="tab-panel" id="tab-panel-import" role="tabpanel" aria-labelledby="tab-btn-import">
+
   <section class="card">
     <label for="group">Group</label>
     <select id="group"></select>
@@ -66,7 +73,7 @@
       <input type="checkbox" id="delete_source" checked/>
       Delete source file(s) after successful import
     </label>
-    <button id="import-btn">Import</button>
+    <button id="import-btn" class="primary-btn">Import</button>
   </section>
 
   <details class="card">
@@ -105,6 +112,78 @@
     <p class="hint">Leave a numeric field blank to omit that flag and use rdimport's own default instead.</p>
     <button type="button" id="reset-advanced-btn" class="link-btn">Reset to defaults</button>
   </details>
+
+  </div>
+
+  <div class="tab-panel" id="tab-panel-scheduler" role="tabpanel" aria-labelledby="tab-btn-scheduler" hidden>
+    <section class="card">
+      <label for="scheduler_service">Service</label>
+      <select id="scheduler_service">
+        <option value="">Select a service…</option>
+      </select>
+    </section>
+
+    <section class="card" id="scheduler-calendar-card" hidden>
+      <div class="calendar-header">
+        <button type="button" id="cal-prev-btn" class="link-btn" aria-label="Previous month">&#8249;</button>
+        <span id="cal-month-label" class="calendar-month-label"></span>
+        <button type="button" id="cal-next-btn" class="link-btn" aria-label="Next month">&#8250;</button>
+      </div>
+      <div class="calendar-weekdays">
+        <span>Su</span><span>Mo</span><span>Tu</span><span>We</span><span>Th</span><span>Fr</span><span>Sa</span>
+      </div>
+      <div class="calendar-grid" id="calendar-grid"></div>
+      <div class="calendar-legend">
+        <span><i class="legend-swatch legend-green"></i> Traffic + chained</span>
+        <span><i class="legend-swatch legend-orange"></i> Chained, no traffic</span>
+        <span><i class="legend-swatch legend-purple"></i> Traffic, not chained</span>
+        <span><i class="legend-swatch legend-red"></i> Incomplete</span>
+        <span><i class="legend-swatch legend-selected"></i> Selected</span>
+      </div>
+    </section>
+
+    <section class="card" id="scheduler-options-card" hidden>
+      <label class="checkbox">
+        <input type="checkbox" id="import_traffic" />
+        Import traffic during this run
+      </label>
+      <label class="checkbox" style="margin-top:8px;">
+        <input type="checkbox" id="overwrite_without_asking" />
+        Overwrite already-scheduled days without asking
+      </label>
+
+      <div id="scheduler-overwrite-notice" class="cart-exists-notice" hidden>
+        <p class="warning">
+          <strong id="scheduler-overwrite-count"></strong> of the selected day(s)
+          already have a generated log: <span id="scheduler-overwrite-dates"></span>.
+          Generating will overwrite them.
+        </p>
+        <div class="notice-actions">
+          <button type="button" id="scheduler-overwrite-cancel-btn" class="secondary-btn">Cancel</button>
+          <button type="button" id="scheduler-overwrite-confirm-btn" class="primary-btn">Generate anyway</button>
+        </div>
+      </div>
+
+      <button type="button" id="scheduler-generate-btn" class="primary-btn" style="margin-top:14px;">Generate Schedule</button>
+    </section>
+
+    <details class="card" id="scheduler-advanced-card" hidden>
+      <summary>Advanced options</summary>
+      <p class="warning">
+        ⚠ rdlogmanager talks to the Rivendell database for every day it
+        generates. Over a remote connection on modest hardware, one day
+        can take several minutes — raise this if runs are getting killed
+        before they finish.
+      </p>
+      <div class="advanced-grid">
+        <div>
+          <label for="scheduler_timeout_minutes">Timeout per day (minutes)</label>
+          <input type="number" id="scheduler_timeout_minutes" value="30" min="1" />
+        </div>
+      </div>
+      <button type="button" id="scheduler-reset-advanced-btn" class="link-btn">Reset to defaults</button>
+    </details>
+  </div>
 
   <div class="modal-overlay" id="import-modal" hidden>
     <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
