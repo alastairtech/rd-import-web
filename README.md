@@ -33,6 +33,33 @@ and import — without going through Rivendell's dropbox.
 - The app never writes to the Rivendell database itself — every actual
   import is delegated to `rdimport`, same as if you ran it by hand.
 
+### Scheduler tab
+
+Generates (and optionally traffic-merges) Rivendell logs for a service,
+for one or more days at a time, by driving `rdlogmanager` — the same tool
+the station's own cron script uses — instead of hand-running it.
+
+- Pick a **Service**, then click day(s) on the calendar. Each selected
+  day gets its own `rdlogmanager -g [-t] -s <service> -d <offset>` call,
+  run sequentially; the `-d` offset is computed from *tomorrow*, matching
+  `rdlogmanager`'s own convention (`-d 0` = tomorrow, `-d -1` = today).
+  Past days can't be selected.
+- The calendar shades days that already have a generated log, using
+  Rivendell's own log state: green (traffic merged **and** chained to the
+  next day's log), orange (chained, traffic not merged), purple (traffic
+  merged, not chained), red (neither — incomplete). Generating a
+  already-shaded day warns before overwriting it, unless "Overwrite
+  already-scheduled days without asking" is checked.
+- **Import traffic during this run** adds `-t` to the `rdlogmanager` call
+  for every selected day.
+- Advanced options let you raise the per-day timeout (default 30
+  minutes) — generating one day against a remote DB on modest hardware
+  (e.g. a Raspberry Pi host) can be slow, and a run that times out is
+  terminated (SIGTERM, then SIGKILL after a grace period) rather than
+  left to hang.
+- Requires the service's Rivendell `NAME_TEMPLATE` to be set — that's how
+  a calendar date maps to a `LOGS.NAME`.
+
 ## Setup
 
 ```bash
@@ -44,9 +71,9 @@ pip install -r requirements.txt
 
 The user running this needs:
 - Read access to `/etc/rd.conf`
-- Execute access to `rdimport` (and whatever it needs — Rivendell's own
-  user/group is usually simplest, e.g. run as `rd` or add your service
-  user to the `rivendell` group)
+- Execute access to `rdimport` and `rdlogmanager` (and whatever they
+  need — Rivendell's own user/group is usually simplest, e.g. run as `rd`
+  or add your service user to the `rivendell` group)
 - Write access to `RD_IMPORT_ROOT` (used only as a scratch space for
   uploaded files before rdimport picks them up)
 
@@ -60,6 +87,8 @@ All via environment variables, all optional:
 | `RD_IMPORT_ROOT`       | `/home/rd/import`    | Scratch directory for staged uploads before import |
 | `RDIMPORT_BIN`         | `rdimport`           | Path to the rdimport binary (if not on PATH) |
 | `RD_IMPORT_TIMEOUT`    | `1800`               | Max seconds a single rdimport call can run |
+| `RDLOGMANAGER_BIN`     | `rdlogmanager`       | Path to the rdlogmanager binary (if not on PATH) |
+| `RD_SCHEDULER_TIMEOUT` | `1800`               | Default max seconds per day for a Scheduler tab run (overridable per-run in the UI) |
 
 ## Running
 
@@ -108,6 +137,14 @@ sudo systemctl status rd-import-web
 sudo systemctl restart rd-import-web
 journalctl -u rd-import-web -f
 ```
+
+**After pulling code updates on an already-deployed box, always
+`systemctl restart rd-import-web`.** Templates and static files
+(`index.html`, `app.js`) are read from disk on every request, but the
+FastAPI route table is built once at process startup — so a `git pull`
+without a restart can serve new frontend against old backend routes,
+e.g. a page/button that calls an endpoint the running process doesn't
+have yet, failing with a 404 that looks like a missing file.
 
 ### Manual setup (if you'd rather write the unit file yourself)
 
